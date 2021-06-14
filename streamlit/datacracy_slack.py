@@ -5,14 +5,18 @@ import requests
 import sys
 import os
 import pandas as pd
+pd.plotting.register_matplotlib_converters()
+import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
 import re
 from datetime import datetime as dt
 
+
 st.set_page_config(layout="wide")
 
 st.title('DataCracy ATOM Tiến Độ Lớp Học')
-with open('./env_variable.json','r') as j:
+with open('./assignment_6/env_variable.json','r') as j:
     json_data = json.load(j)
 
 #SLACK_BEARER_TOKEN = os.environ.get('SLACK_BEARER_TOKEN') ## Get in setting of Streamlit Share
@@ -111,6 +115,16 @@ def process_msg_data(msg_df, user_df, channel_df):
     msg_df['msg_date'] = msg_df['msg_ts'].dt.strftime('%Y-%m-%d')
     msg_df['msg_time'] = msg_df['msg_ts'].dt.strftime('%H:%M')
     msg_df['wordcount'] = msg_df.text.apply(lambda s: len(s.split()))
+
+    ## Get weekdays
+    weekday_list = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    msg_df['weekday'] = msg_df['msg_ts'].dt.dayofweek.apply(lambda x: weekday_list[x])
+    msg_df['raw_dow'] = msg_df['msg_ts'].dt.dayofweek
+
+    ## Get hours
+    hour_dict = ['Morning', 'Afternoon', 'Evening']
+    msg_df['hour'] = msg_df['msg_ts'].dt.hour.apply(lambda x: hour_dict[0] if x in range(5, 13) else (hour_dict[1] if x in range(13, 19) else hour_dict[2]))
+
     return msg_df
 
 
@@ -119,12 +133,37 @@ user_df = load_users_df()
 channel_df = load_channel_df()
 msg_df = load_msg_dict()
 
-#st.write(process_msg_data(msg_df, user_df, channel_df))
-
-
 # Input
 st.sidebar.markdown('## Thông tin')
-user_id = st.sidebar.text_input("Nhập Mã Số Người Dùng", 'U01xxxx')
+user_id = st.sidebar.text_input("Nhập Mã Số Người Dùng", 'U01V00KHHHP')
+
+## Total submission
+p_total_submit = process_msg_data(msg_df, user_df, channel_df)
+total_submit = p_total_submit[p_total_submit.channel_name.str.contains('assignment')]
+total_submit = total_submit[total_submit.DataCracy_role.str.contains('Learner')]
+t_latest_ts = total_submit.groupby(['channel_name', 'user_id']).msg_ts.idxmax()
+total_submit = total_submit.loc[t_latest_ts].sort_values(by=['channel_name', 'raw_dow'])
+dis_cols0 = ['channel_name', 'user_id', 'submit_name', 'weekday', 'hour']
+
+# Total Review
+total_review = total_submit[(total_submit.user_id != total_submit.reply_user1) & (total_submit.user_id != total_submit.reply_user2)] ##-> Remove the case self-reply
+total_review = total_review[total_review.reply_user_count > 0]
+dis_cols00 = ['channel_name', 'weekday', 'reply_user_count','submit_name']
+
+review_channel = total_review[['channel_name', 'reply_user_count']].groupby('channel_name').count().reset_index().rename(columns={'reply_user_count':'total_reviewed'})
+review_channel1 = total_submit[['channel_name', 'reply_user_count']].groupby('channel_name').count().reset_index().rename(columns={'reply_user_count':'total_submit'})
+review_channel = review_channel1.merge(review_channel, how='left', on='channel_name')
+review_channel['percentage'] = review_channel.total_reviewed / review_channel.total_submit * 100
+
+# Total Discussion
+total_discuss = p_total_submit[p_total_submit.channel_name.str.contains('discuss')]
+total_discuss = total_discuss[total_discuss.DataCracy_role.str.contains('Learner')]
+total_discuss = total_discuss.sort_values(['msg_date','msg_time'])
+
+discuss_user = total_discuss.groupby('channel_name').wordcount.sum()
+discuss_user = discuss_user.reset_index()
+discuss_user = discuss_user.sort_values(by=['wordcount'], ascending=False)
+
 
 
 valid_user_id = user_df['user_id'].str.contains(user_id).any()
@@ -139,27 +178,47 @@ if valid_user_id:
     submit_df = submit_df[submit_df.user_id == user_id]
     latest_ts = submit_df.groupby(['channel_name', 'user_id']).msg_ts.idxmax() ## -> Latest ts
     submit_df = submit_df.loc[latest_ts]
-    dis_cols1 = ['channel_name', 'created_at','msg_date','msg_time','reply_user_count', 'reply1_name']
+    dis_cols1 = ['channel_name', 'created_at','msg_date', 'weekday', 'msg_time', 'hour', 'reply_user_count', 'reply1_name']
     
     # Review
     review_df = p_msg_df[p_msg_df.user_id != user_id] ##-> Remove the case self-reply
     review_df = review_df[review_df.channel_name.str.contains('assignment')]
     review_df = review_df[review_df.DataCracy_role.str.contains('Learner')]
-    dis_cols2 = ['channel_name', 'created_at','msg_date','msg_time','reply_user_count','submit_name']
+    dis_cols2 = ['channel_name', 'created_at','msg_date', 'weekday', 'msg_time', 'hour', 'reply_user_count','submit_name']
     
     ## Discussion
     discuss_df = p_msg_df[p_msg_df.channel_name.str.contains('discuss')]
     discuss_df = discuss_df.sort_values(['msg_date','msg_time'])
-    dis_cols3 = ['channel_name','msg_date', 'msg_time','wordcount','reply_user_count','reply1_name']
+    dis_cols3 = ['channel_name','msg_date', 'weekday', 'msg_time', 'hour', 'wordcount','reply_user_count','reply1_name']
     
     st.markdown('Hello **{}**!'.format(list(filter_user_df['real_name'])[0]))
     st.write(filter_user_df)
     st.markdown('## Lịch sử Nộp Assignment')
     st.write(submit_df[dis_cols1])
+
     st.markdown('## Lịch sử Review Assignment')
     st.write(review_df[dis_cols2])
+
     st.markdown('## Lịch sử Discussion')
     st.write(discuss_df[dis_cols3])
+
+    st.markdown('## Visualization')
+    st.markdown('### Phân Bổ Thời Gian Nộp Assignment')
+    # Create a distribution chart for submission
+    chart1 = sns.catplot(x="weekday", kind="count", hue="channel_name", data=total_submit[['channel_name', 'weekday']])
+    st.write(total_submit)
+    st.pyplot(chart1)
+    st.markdown('### Phân Bổ Reviews Theo Channel')
+    # Create a bar chart for reviews
+    plt.figure(figsize=(16,6))
+    chart2 = sns.barplot(x=review_channel['channel_name'], y=review_channel['percentage'])
+    st.write(total_review[dis_cols00])
+    st.pyplot(chart2.figure)
+    st.markdown('### Lịch sử Discussion theo Channel')
+    # Create a distribution chart for wordcount
+    chart3 = sns.barplot(x=discuss_user['channel_name'], y=discuss_user['wordcount'])
+    st.write(discuss_user)
+    st.pyplot(chart3.figure)
 
     # Number cards on Sidebar
     st.sidebar.markdown(f'''<div class="card text-info bg-info mb-3" style="width: 18rem">
