@@ -4,7 +4,7 @@ import pandas as pd
 st.set_page_config(layout="wide")
 
 st.title("Handpick Files")
-input = st.file_uploader("Upload A Excel File")
+input = st.file_uploader("Upload An Excel File")
 
 if input is not None:
     try:
